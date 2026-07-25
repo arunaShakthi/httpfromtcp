@@ -8,8 +8,18 @@ import (
 	"unicode"
 )
 
+const bufferSize = 8
+
+type parserState int
+
+const (
+	stateInitialized parserState = iota
+	stateDone
+)
+
 type Request struct {
 	RequestLine RequestLine
+	state       parserState
 }
 
 type RequestLine struct {
@@ -18,32 +28,41 @@ type RequestLine struct {
 	Method        string
 }
 
-func RequestFromReader(reader io.Reader) (*Request, error) {
-	buf, err := io.ReadAll(reader)
-	if err != nil {
-		return nil, fmt.Errorf("reading request: %w", err)
-	}
+func (r *Request) parse(data []byte) (int, error) {
+	switch r.state {
+	case stateInitialized:
+		reqLine, n, err := parseRequestLine(data)
+		if err != nil {
+			return 0, err
+		}
+		if n == 0 {
+			return 0, nil
+		}
+		r.RequestLine = *reqLine
+		r.state = stateDone
+		return n, nil
 
-	data := string(buf)
-	firstLine, _, _ := strings.Cut(data, "\r\n")
-	if firstLine == "" {
-		firstLine, _, _ = strings.Cut(data, "\n")
-	}
+	case stateDone:
+		return 0, errors.New("error: trying to read data in a done state")
 
-	reqLine, err := parseRequestLine(firstLine)
-	if err != nil {
-		return nil, err
+	default:
+		return 0, errors.New("error: unknown state")
 	}
-
-	return &Request{
-		RequestLine: *reqLine,
-	}, nil
 }
 
-func parseRequestLine(line string) (*RequestLine, error) {
+func parseRequestLine(data []byte) (*RequestLine, int, error) {
+	str := string(data)
+	idx := strings.Index(str, "\r\n")
+	if idx == -1 {
+		return nil, 0, nil
+	}
+
+	line := str[:idx]
+	bytesConsumed := idx + 2
+
 	parts := strings.Split(line, " ")
 	if len(parts) != 3 {
-		return nil, errors.New("invalid request line format: must have 3 parts")
+		return nil, 0, errors.New("invalid request line format: must have 3 parts")
 	}
 
 	method := parts[0]
@@ -51,26 +70,68 @@ func parseRequestLine(line string) (*RequestLine, error) {
 	versionRaw := parts[2]
 
 	if method == "" {
-		return nil, errors.New("empty HTTP method")
+		return nil, 0, errors.New("empty HTTP method")
 	}
 	for _, ch := range method {
 		if !unicode.IsUpper(ch) || ch < 'A' || ch > 'Z' {
-			return nil, fmt.Errorf("invalid HTTP method %q: must contain only uppercase ASCII characters", method)
+			return nil, 0, fmt.Errorf("invalid HTTP method %q: must contain only uppercase ASCII characters", method)
 		}
 	}
 
 	if !strings.HasPrefix(versionRaw, "HTTP/") {
-		return nil, fmt.Errorf("invalid HTTP version format %q", versionRaw)
+		return nil, 0, fmt.Errorf("invalid HTTP version format %q", versionRaw)
 	}
 
 	version := strings.TrimPrefix(versionRaw, "HTTP/")
 	if version != "1.1" {
-		return nil, fmt.Errorf("unsupported HTTP version %q: only HTTP/1.1 is supported", version)
+		return nil, 0, fmt.Errorf("unsupported HTTP version %q: only HTTP/1.1 is supported", version)
 	}
 
 	return &RequestLine{
 		Method:        method,
 		RequestTarget: target,
 		HttpVersion:   version,
-	}, nil
+	}, bytesConsumed, nil
+}
+
+func RequestFromReader(reader io.Reader) (*Request, error) {
+	buf := make([]byte, bufferSize)
+	readToIndex := 0
+	req := &Request{state: stateInitialized}
+
+	for req.state != stateDone {
+		if readToIndex == len(buf) {
+			newBuf := make([]byte, len(buf)*2)
+			copy(newBuf, buf[:readToIndex])
+			buf = newBuf
+		}
+
+		n, err := reader.Read(buf[readToIndex:])
+		if n > 0 {
+			readToIndex += n
+		}
+
+		if readToIndex > 0 {
+			nParsed, parseErr := req.parse(buf[:readToIndex])
+			if parseErr != nil {
+				return nil, parseErr
+			}
+			if nParsed > 0 {
+				copy(buf, buf[nParsed:readToIndex])
+				readToIndex -= nParsed
+			}
+		}
+
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				if req.state != stateDone {
+					req.state = stateDone
+				}
+				break
+			}
+			return nil, err
+		}
+	}
+
+	return req, nil
 }
