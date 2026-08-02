@@ -6,6 +6,8 @@ import (
 	"io"
 	"strings"
 	"unicode"
+
+	"github.com/arunaShakthi/httpfromtcp/internal/headers"
 )
 
 const bufferSize = 8
@@ -14,11 +16,13 @@ type parserState int
 
 const (
 	stateInitialized parserState = iota
+	stateParsingHeaders
 	stateDone
 )
 
 type Request struct {
 	RequestLine RequestLine
+	Headers     headers.Headers
 	state       parserState
 }
 
@@ -29,6 +33,21 @@ type RequestLine struct {
 }
 
 func (r *Request) parse(data []byte) (int, error) {
+	totalBytesParsed := 0
+	for r.state != stateDone {
+		n, err := r.parseSingle(data[totalBytesParsed:])
+		if err != nil {
+			return 0, err
+		}
+		if n == 0 {
+			break
+		}
+		totalBytesParsed += n
+	}
+	return totalBytesParsed, nil
+}
+
+func (r *Request) parseSingle(data []byte) (int, error) {
 	switch r.state {
 	case stateInitialized:
 		reqLine, n, err := parseRequestLine(data)
@@ -39,7 +58,20 @@ func (r *Request) parse(data []byte) (int, error) {
 			return 0, nil
 		}
 		r.RequestLine = *reqLine
-		r.state = stateDone
+		r.state = stateParsingHeaders
+		return n, nil
+
+	case stateParsingHeaders:
+		if r.Headers == nil {
+			r.Headers = headers.NewHeaders()
+		}
+		n, done, err := r.Headers.Parse(data)
+		if err != nil {
+			return 0, err
+		}
+		if done {
+			r.state = stateDone
+		}
 		return n, nil
 
 	case stateDone:
@@ -97,7 +129,10 @@ func parseRequestLine(data []byte) (*RequestLine, int, error) {
 func RequestFromReader(reader io.Reader) (*Request, error) {
 	buf := make([]byte, bufferSize)
 	readToIndex := 0
-	req := &Request{state: stateInitialized}
+	req := &Request{
+		state:   stateInitialized,
+		Headers: headers.NewHeaders(),
+	}
 
 	for req.state != stateDone {
 		if readToIndex == len(buf) {
@@ -125,7 +160,7 @@ func RequestFromReader(reader io.Reader) (*Request, error) {
 		if err != nil {
 			if errors.Is(err, io.EOF) {
 				if req.state != stateDone {
-					req.state = stateDone
+					return nil, io.ErrUnexpectedEOF
 				}
 				break
 			}
