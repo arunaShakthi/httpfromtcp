@@ -99,4 +99,13 @@ func TestHeadersParse(t *testing.T) {
 		assert.Equal(t, 29, n)
 		assert.False(t, done)
 	})
+
+	t.Run("Get method case-insensitivity", func(t *testing.T) {
+		headers := NewHeaders()
+		headers["content-length"] = "42"
+		assert.Equal(t, "42", headers.Get("Content-Length"))
+		assert.Equal(t, "42", headers.Get("content-length"))
+		assert.Equal(t, "42", headers.Get("CONTENT-LENGTH"))
+		assert.Equal(t, "", headers.Get("non-existent"))
+	})
 }
