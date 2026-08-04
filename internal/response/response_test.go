@@ -44,3 +44,39 @@ func TestGetDefaultHeaders(t *testing.T) {
 	assert.Equal(t, "close", h.Get("Connection"))
 	assert.Equal(t, "text/plain", h.Get("Content-Type"))
 }
+
+func TestResponseWriter(t *testing.T) {
+	t.Run("Valid order", func(t *testing.T) {
+		var buf bytes.Buffer
+		w := NewWriter(&buf)
+
+		err := w.WriteStatusLine(StatusOK)
+		require.NoError(t, err)
+
+		h := GetDefaultHeaders(12)
+		err = w.WriteHeaders(h)
+		require.NoError(t, err)
+
+		n, err := w.WriteBody([]byte("hello world\n"))
+		require.NoError(t, err)
+		assert.Equal(t, 12, n)
+	})
+
+	t.Run("Out of order WriteHeaders before status line", func(t *testing.T) {
+		var buf bytes.Buffer
+		w := NewWriter(&buf)
+
+		h := GetDefaultHeaders(10)
+		err := w.WriteHeaders(h)
+		require.Error(t, err)
+	})
+
+	t.Run("Out of order WriteBody before headers", func(t *testing.T) {
+		var buf bytes.Buffer
+		w := NewWriter(&buf)
+
+		_ = w.WriteStatusLine(StatusOK)
+		_, err := w.WriteBody([]byte("data"))
+		require.Error(t, err)
+	})
+}

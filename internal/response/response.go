@@ -1,6 +1,7 @@
 package response
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"strconv"
@@ -15,6 +16,57 @@ const (
 	StatusBadRequest          StatusCode = 400
 	StatusInternalServerError StatusCode = 500
 )
+
+type writerState int
+
+const (
+	writerStateStart writerState = iota
+	writerStateStatusLineWritten
+	writerStateHeadersWritten
+	writerStateBodyWritten
+)
+
+type Writer struct {
+	writer io.Writer
+	state  writerState
+}
+
+func NewWriter(w io.Writer) *Writer {
+	return &Writer{
+		writer: w,
+		state:  writerStateStart,
+	}
+}
+
+func (w *Writer) WriteStatusLine(statusCode StatusCode) error {
+	if w.state != writerStateStart {
+		return errors.New("error: WriteStatusLine called out of order")
+	}
+	err := WriteStatusLine(w.writer, statusCode)
+	if err == nil {
+		w.state = writerStateStatusLineWritten
+	}
+	return err
+}
+
+func (w *Writer) WriteHeaders(h headers.Headers) error {
+	if w.state != writerStateStatusLineWritten {
+		return errors.New("error: WriteHeaders called out of order")
+	}
+	err := WriteHeaders(w.writer, h)
+	if err == nil {
+		w.state = writerStateHeadersWritten
+	}
+	return err
+}
+
+func (w *Writer) WriteBody(p []byte) (int, error) {
+	if w.state != writerStateHeadersWritten && w.state != writerStateBodyWritten {
+		return 0, errors.New("error: WriteBody called out of order")
+	}
+	w.state = writerStateBodyWritten
+	return w.writer.Write(p)
+}
 
 func WriteStatusLine(w io.Writer, statusCode StatusCode) error {
 	var reason string

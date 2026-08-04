@@ -1,8 +1,6 @@
 package main
 
 import (
-	"fmt"
-	"io"
 	"log"
 	"os"
 	"os/signal"
@@ -16,28 +14,30 @@ import (
 const port = 42069
 
 func main() {
-	handler := func(w io.Writer, req *request.Request) *server.HandlerError {
+	handler := func(w *response.Writer, req *request.Request) {
+		var statusCode response.StatusCode
+		var body string
+
 		switch req.RequestLine.RequestTarget {
 		case "/yourproblem":
-			return &server.HandlerError{
-				StatusCode: response.StatusBadRequest,
-				Message:    "Your problem is not my problem\n",
-			}
+			statusCode = response.StatusBadRequest
+			body = "<html><body><h1>400 Bad Request</h1><p>Your problem is not my problem</p></body></html>\n"
 		case "/myproblem":
-			return &server.HandlerError{
-				StatusCode: response.StatusInternalServerError,
-				Message:    "Woopsie, my bad\n",
-			}
+			statusCode = response.StatusInternalServerError
+			body = "<html><body><h1>500 Internal Server Error</h1><p>Woopsie, my bad</p></body></html>\n"
 		default:
-			_, err := fmt.Fprint(w, "All good, frfr\n")
-			if err != nil {
-				return &server.HandlerError{
-					StatusCode: response.StatusInternalServerError,
-					Message:    fmt.Sprintf("error writing body: %v\n", err),
-				}
-			}
-			return nil
+			statusCode = response.StatusOK
+			body = "<html><body><h1>200 OK</h1><p>All good, frfr</p></body></html>\n"
 		}
+
+		bodyBytes := []byte(body)
+		_ = w.WriteStatusLine(statusCode)
+
+		h := response.GetDefaultHeaders(len(bodyBytes))
+		h["content-type"] = "text/html"
+
+		_ = w.WriteHeaders(h)
+		_, _ = w.WriteBody(bodyBytes)
 	}
 
 	srv, err := server.Serve(port, handler)
