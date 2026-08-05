@@ -1,9 +1,13 @@
 package main
 
 import (
+	"errors"
+	"io"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/arunaShakthi/httpfromtcp/internal/request"
@@ -15,10 +19,57 @@ const port = 42069
 
 func main() {
 	handler := func(w *response.Writer, req *request.Request) {
+		target := req.RequestLine.RequestTarget
+
+		if strings.HasPrefix(target, "/httpbin/") {
+			subPath := strings.TrimPrefix(target, "/httpbin/")
+			targetURL := "https://httpbingo.org/" + subPath
+
+			resp, err := http.Get(targetURL)
+			if err != nil {
+				log.Printf("proxy GET error: %v\n", err)
+				_ = w.WriteStatusLine(response.StatusInternalServerError)
+				h := response.GetDefaultHeaders(0)
+				_ = w.WriteHeaders(h)
+				return
+			}
+			defer resp.Body.Close()
+
+			_ = w.WriteStatusLine(response.StatusOK)
+
+			h := response.GetDefaultHeaders(0)
+			delete(h, "content-length")
+			h["transfer-encoding"] = "chunked"
+			h["connection"] = "close"
+			if ct := resp.Header.Get("Content-Type"); ct != "" {
+				h["content-type"] = ct
+			}
+
+			_ = w.WriteHeaders(h)
+
+			buf := make([]byte, 1024)
+			for {
+				n, rErr := resp.Body.Read(buf)
+				if n > 0 {
+					log.Printf("proxy read %d bytes\n", n)
+					_, _ = w.WriteChunkedBody(buf[:n])
+				}
+				if rErr != nil {
+					if errors.Is(rErr, io.EOF) {
+						break
+					}
+					log.Printf("error reading proxy body: %v\n", rErr)
+					break
+				}
+			}
+			_, _ = w.WriteChunkedBodyDone()
+			return
+		}
+
 		var statusCode response.StatusCode
 		var body string
 
-		switch req.RequestLine.RequestTarget {
+		switch target {
 		case "/yourproblem":
 			statusCode = response.StatusBadRequest
 			body = "<html><body><h1>400 Bad Request</h1><p>Your problem is not my problem</p></body></html>\n"

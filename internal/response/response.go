@@ -68,6 +68,38 @@ func (w *Writer) WriteBody(p []byte) (int, error) {
 	return w.writer.Write(p)
 }
 
+func (w *Writer) WriteChunkedBody(p []byte) (int, error) {
+	if w.state != writerStateHeadersWritten && w.state != writerStateBodyWritten {
+		return 0, errors.New("error: WriteChunkedBody called out of order")
+	}
+	if len(p) == 0 {
+		return 0, nil
+	}
+	w.state = writerStateBodyWritten
+
+	chunkHeader := fmt.Sprintf("%X\r\n", len(p))
+	if _, err := w.writer.Write([]byte(chunkHeader)); err != nil {
+		return 0, err
+	}
+	n, err := w.writer.Write(p)
+	if err != nil {
+		return n, err
+	}
+	if _, err := w.writer.Write([]byte("\r\n")); err != nil {
+		return n, err
+	}
+
+	return n, nil
+}
+
+func (w *Writer) WriteChunkedBodyDone() (int, error) {
+	if w.state != writerStateHeadersWritten && w.state != writerStateBodyWritten {
+		return 0, errors.New("error: WriteChunkedBodyDone called out of order")
+	}
+	w.state = writerStateBodyWritten
+	return w.writer.Write([]byte("0\r\n\r\n"))
+}
+
 func WriteStatusLine(w io.Writer, statusCode StatusCode) error {
 	var reason string
 	switch statusCode {

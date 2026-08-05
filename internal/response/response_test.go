@@ -80,3 +80,34 @@ func TestResponseWriter(t *testing.T) {
 		require.Error(t, err)
 	})
 }
+
+func TestWriteChunkedBody(t *testing.T) {
+	t.Run("Valid chunked body output", func(t *testing.T) {
+		var buf bytes.Buffer
+		w := NewWriter(&buf)
+
+		_ = w.WriteStatusLine(StatusOK)
+		h := GetDefaultHeaders(0)
+		delete(h, "content-length")
+		h["transfer-encoding"] = "chunked"
+		_ = w.WriteHeaders(h)
+
+		chunk1 := []byte("I could go for a cup of coffee")
+		n, err := w.WriteChunkedBody(chunk1)
+		require.NoError(t, err)
+		assert.Equal(t, len(chunk1), n)
+
+		chunk2 := []byte("But not Java")
+		n, err = w.WriteChunkedBody(chunk2)
+		require.NoError(t, err)
+		assert.Equal(t, len(chunk2), n)
+
+		_, err = w.WriteChunkedBodyDone()
+		require.NoError(t, err)
+
+		output := buf.String()
+		assert.Contains(t, output, "1E\r\nI could go for a cup of coffee\r\n")
+		assert.Contains(t, output, "C\r\nBut not Java\r\n")
+		assert.Contains(t, output, "0\r\n\r\n")
+	})
+}
