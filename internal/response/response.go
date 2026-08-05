@@ -100,6 +100,24 @@ func (w *Writer) WriteChunkedBodyDone() (int, error) {
 	return w.writer.Write([]byte("0\r\n\r\n"))
 }
 
+func (w *Writer) WriteTrailers(h headers.Headers) error {
+	if w.state != writerStateHeadersWritten && w.state != writerStateBodyWritten {
+		return errors.New("error: WriteTrailers called out of order")
+	}
+	w.state = writerStateBodyWritten
+
+	if _, err := w.writer.Write([]byte("0\r\n")); err != nil {
+		return err
+	}
+	for k, v := range h {
+		if _, err := w.writer.Write([]byte(fmt.Sprintf("%s: %s\r\n", k, v))); err != nil {
+			return err
+		}
+	}
+	_, err := w.writer.Write([]byte("\r\n"))
+	return err
+}
+
 func WriteStatusLine(w io.Writer, statusCode StatusCode) error {
 	var reason string
 	switch statusCode {

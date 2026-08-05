@@ -2,8 +2,10 @@ package response
 
 import (
 	"bytes"
+	"strings"
 	"testing"
 
+	"github.com/arunaShakthi/httpfromtcp/internal/headers"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -109,5 +111,36 @@ func TestWriteChunkedBody(t *testing.T) {
 		assert.Contains(t, output, "1E\r\nI could go for a cup of coffee\r\n")
 		assert.Contains(t, output, "C\r\nBut not Java\r\n")
 		assert.Contains(t, output, "0\r\n\r\n")
+	})
+}
+
+func TestWriteTrailers(t *testing.T) {
+	t.Run("Valid trailer output", func(t *testing.T) {
+		var buf bytes.Buffer
+		w := NewWriter(&buf)
+
+		_ = w.WriteStatusLine(StatusOK)
+		h := GetDefaultHeaders(0)
+		delete(h, "content-length")
+		h["transfer-encoding"] = "chunked"
+		h["trailer"] = "X-Content-SHA256, X-Content-Length"
+		_ = w.WriteHeaders(h)
+
+		chunk := []byte("hello world")
+		_, _ = w.WriteChunkedBody(chunk)
+
+		trailers := headers.NewHeaders()
+		trailers["X-Content-SHA256"] = "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
+		trailers["X-Content-Length"] = "11"
+
+		err := w.WriteTrailers(trailers)
+		require.NoError(t, err)
+
+		output := buf.String()
+		assert.Contains(t, output, "B\r\nhello world\r\n")
+		assert.Contains(t, output, "0\r\n")
+		assert.Contains(t, output, "X-Content-SHA256: b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9\r\n")
+		assert.Contains(t, output, "X-Content-Length: 11\r\n")
+		assert.True(t, strings.HasSuffix(output, "\r\n\r\n"))
 	})
 }

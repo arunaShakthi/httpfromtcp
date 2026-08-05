@@ -1,15 +1,19 @@
 package main
 
 import (
+	"crypto/sha256"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 
+	"github.com/arunaShakthi/httpfromtcp/internal/headers"
 	"github.com/arunaShakthi/httpfromtcp/internal/request"
 	"github.com/arunaShakthi/httpfromtcp/internal/response"
 	"github.com/arunaShakthi/httpfromtcp/internal/server"
@@ -40,6 +44,7 @@ func main() {
 			h := response.GetDefaultHeaders(0)
 			delete(h, "content-length")
 			h["transfer-encoding"] = "chunked"
+			h["trailer"] = "X-Content-SHA256, X-Content-Length"
 			h["connection"] = "close"
 			if ct := resp.Header.Get("Content-Type"); ct != "" {
 				h["content-type"] = ct
@@ -47,12 +52,15 @@ func main() {
 
 			_ = w.WriteHeaders(h)
 
+			var fullBody []byte
 			buf := make([]byte, 1024)
 			for {
 				n, rErr := resp.Body.Read(buf)
 				if n > 0 {
+					chunkData := buf[:n]
+					fullBody = append(fullBody, chunkData...)
 					log.Printf("proxy read %d bytes\n", n)
-					_, _ = w.WriteChunkedBody(buf[:n])
+					_, _ = w.WriteChunkedBody(chunkData)
 				}
 				if rErr != nil {
 					if errors.Is(rErr, io.EOF) {
@@ -62,7 +70,15 @@ func main() {
 					break
 				}
 			}
-			_, _ = w.WriteChunkedBodyDone()
+
+			hashBytes := sha256.Sum256(fullBody)
+			hashHex := fmt.Sprintf("%x", hashBytes)
+
+			trailers := headers.NewHeaders()
+			trailers["X-Content-SHA256"] = hashHex
+			trailers["X-Content-Length"] = strconv.Itoa(len(fullBody))
+
+			_ = w.WriteTrailers(trailers)
 			return
 		}
 
